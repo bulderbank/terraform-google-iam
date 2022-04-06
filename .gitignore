@@ -1,0 +1,10 @@
+# Local .terraform stuff
+**/.terraform/*
+.terraform.lock.hcl
+
+# .tfstate files
+*.tfstate
+*.tfstate.*
+
+*.tfvars
+
