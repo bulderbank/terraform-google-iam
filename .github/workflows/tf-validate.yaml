@@ -1,0 +1,29 @@
+name: Terraform validation
+on:
+  pull_request:
+    branches:
+      - main
+    types:
+      - opened
+      - synchronize
+      - ready_for_review
+
+env:
+  TF_VERSION: 1.1.7
+
+jobs:
+  tf-validate:
+    name: Terraform validation
+    runs-on: ubuntu-latest
+    steps:
+    - name: Setup Terraform
+      uses: hashicorp/setup-terraform@ed3a0531877aca392eb870f440d9ae7aba83a6bd  # v1.4.0
+      with:
+        terraform_version: ${{ env.TF_VERSION }}
+
+    - name: Terraform validation
+      run: |
+        terraform init -reconfigure
+        terraform fmt -recursive -check
+        terraform validate
+
