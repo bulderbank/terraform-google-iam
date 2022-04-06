@@ -18,6 +18,13 @@ variable "iam_members" {
   description = "A list of non-authorative IAM rules"
   type        = any
 
+  validation {
+    condition = alltrue([
+      for x in var.iam_members : contains(["project", "secret", "bucket"], x.type)
+    ])
+    error_message = "The `type` fields of `var.iam_members` must be one of ['project', 'secret', 'bucket']."
+  }
+
   # TODO: Do this when `optional()` is no longer experimental
   # type = list(object({
   #   type    = string
@@ -32,6 +39,14 @@ variable "iam_bindings" {
   default     = []
   description = "A list of authorative IAM rules for custom roles"
   type        = any
+
+  validation {
+    condition = alltrue([
+      for x in var.iam_bindings : contains(["project", "secret", "bucket"], x.type)
+    ])
+    error_message = "The `type` fields of `var.iam_bindings` must be one of ['project', 'secret', 'bucket']."
+  }
+
   validation {
     condition = alltrue([
       for x in var.iam_bindings : contains(split("/", x.role), "projects")
