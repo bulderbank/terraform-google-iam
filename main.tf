@@ -82,7 +82,7 @@ locals {
           project = lookup(rule, "project", "")
         }
       ]
-    ]) : join("-", [x.type, x.name, x.role]) => x
+    ]) : join("-", [x.type, x.name, x.member, x.role]) => x
   }
 
   # Convert `var.iam_bindings` into a `for_each` compatible map
