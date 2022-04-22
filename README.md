@@ -28,8 +28,7 @@ locals {
 # my-project/modules.tf
 
 module "iam" {
-  source = "/home/df/Projects/terraform-google-iam"
-  #  source = "github.com/bulderbank/terraform-google-iam?ref=v0.1.0"
+  source = "github.com/bulderbank/terraform-google-iam?ref=v1.0.0"
 
 
   repo         = "bulderbank/my-project"
