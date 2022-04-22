@@ -2,13 +2,16 @@
 
 This is a flexible module for handing Google Cloud IAM stuff.
 It covers custom role creation, and GCP member/binding assignments for projects, secrets, and storage buckets.
-It's designed to work well with our YAML oriented configuration approach to Terraform.
+It's designed to work well with our [YAML oriented configuration approach to Terraform](https://medium.com/@dfinnoy/understandable-terraform-projects-9c1cd9b4b21a).
 
 The module can be used to:
 - Create a custom roles
 - Assign `members` to `roles` in a non-authoritative way
-- Assign `members` to `roles` in an authoritative way (we only allow this for custom roles)
+- Assign a single `member` to a custom role in an authoritative way
 
+At first glance, the code may seem quite complicated.
+But this monstrosity actually allows us to keep downstream Terraform root modules very clean and DRY.
+It gives us consistent naming conventions for custom roles, and ensures that we don't accidentally break stuff with `binding` and `policy` rules.
 
 ### Usage
 All the examples below assume that you are using a `config.yaml` file to pass configuration values to Terraform via `locals`:
@@ -20,15 +23,19 @@ locals {
   config = yamldecode(file("${path.root}/config.yaml"))
 }
 ```
+
 ```
 # my-project/modules.tf
 
 module "iam" {
-  source = "github.com/bulderbank/terraform-google-iam?ref=vX.Y.Z"
+  source = "/home/df/Projects/terraform-google-iam"
+  #  source = "github.com/bulderbank/terraform-google-iam?ref=v0.1.0"
 
-  custom_roles  = lookup(local.config, "customRoles", [])
-  iam_members   = lookup(local.config, "iamMembers", [])
-  iam_bindings  = lookup(local.config, "iamBindings", [])
+
+  repo         = "bulderbank/my-project"
+  project      = "my-project"
+  iam_rules    = local.config.iamRules
+  custom_roles = lookup(local.config, "customRoles", [])
 }
 ```
 
@@ -40,9 +47,8 @@ module "iam" {
 
 customRoles:
   - id: customRole1
-    project: my-project                 # optional, defaults to provider config 
-    title: Custom Role number 1         # optional 
-    description: This is a custom role  # optional
+    project: my-project                 # optional, defaults to `var.project` 
+    title: Custom Role number 1         
     permissions:
       - secretmanager.versions.access
       - pubsub.topics.get
@@ -54,74 +60,91 @@ customRoles:
 
 ##### Non-authoritative role assignment
 
-We can use the GCP IAM Member to assign some role to some user, without affecting other IAM assignments:
+We can use the GCP IAM member rules to assign some role to some user, without affecting other IAM assignments:
+These non-authorative assignments are speficied with the `roles` key:
 
 ```
 # my-project/config.yaml
 
-iamMembers:
+iamRules:
   - type: project
     name: my-project
-    member: user:my-username@example.com
+    principal: user:my-username@example.com
     roles:
       - roles/dns.admin
       - projects/my-project/roles/customRole1
   - type: secret
     name: my-secret
-    member: user:my-username@example.com
+    principal: user:my-username@example.com
     roles:
       - roles/secretmanager.viewer
       - roles/secretmanager.secretAccessor
   - type: bucket
     name: my-bucket
-    member: user:my-username@example.com
+    principal: user:my-username@example.com
+    roles:
+      - roles/storage.admin
+
+  # Short form example, type and name defaults to `project` and `var.project` respectively
+  - principal: user:my-username@example.com
     roles:
       - roles/storage.admin
 ```
 
 ##### Authoritative role assignment
 
-We can use the GCP IAM Binding to assign some role to some list of users; this will ensure that no other users are assigned to the role.
-We only allow this for custom roles through this module because accidents can potentially cause outages, or lock developers out of our GCP projects.
-Use with caution.
+We can use the GCP IAM binding rules to assign some role to some list of users; this will ensure that no other users are assigned to the role.
+In this module, we assume that there will be a one-to-one mapping between principals and custom roles.
+We do not use binding rules for non-custom roles, nor do we assign more than one principal to a custom role.
+This is because careless actions involving binding rules can revoke necessary permissions, and potentially cause outages; accidents happen.
+
 
 ```
 # my-project/config.yaml
 
-iamBindings:
+iamRules:
   - type: project
     name: my-project
-    role: projects/my-project/roles/customRole1
-    members:
-      - user:my-username@example.com
-      - group:g_my-group@example.com
-  - type: secret
-    name: my-secret
-    role: projects/bulder-test/roles/customRole2
-    members:
-      - user:my-username@example.com
-      - group:g_my-group@example.com
-```
-
-#### The `project` parameter
-The `custom_roles`, `iam_members`, and `iam_bindings` variables all allow an optional `project` field within the objects in their input lists.
-When it is not defined, Terraform and the Google Provider will default to the GCP project defined within the root module's provider block.
-
-For custom roles, and IAM assignenments for GCP secrets, you may want to work toward a different project:
-
-```
-customRoles:
-  - id: customRole2
-    project: my-other-project
+    principal: user:my-username@example.com
     permissions:
-      - pubsub.topics.get
+      - compute.subnetworks.get
+      - compute.subnetworks.use 
 
-iamMembers:
   - type: secret
     name: my-secret
-    project: my-other-project
-    member: user:my-username@example.com
-    roles:
-      - roles/secretmanager.viewer
-      - roles/secretmanager.secretAccessor
+    principal: user:my-username@example.com   
+    permissions:
+      - secretmanager.secrets.getIamPolicy
+
+  # Short form example, type and name defaults to `project` and `var.project` respectively
+  - principal: user:my-username@example.com
+    permissions:
+      - compute.subnetworks.get
+      - compute.subnetworks.use 
 ```
+
+##### Non-authoritative custom role assignment
+
+If you need a reusable custom role that will be assigned to multiple principals, do this:
+
+```
+# my-project/config.yaml
+
+customRoles:
+  - id: my.custom.role
+    project: my-project         # optional, defaults to `var.project`
+    title: My Super Dank Role
+    permissions:
+      - compute.subnetworks.get
+      - compute.subnetworks.use
+
+iamRules:
+  - principal: user:my-username@example.com
+    roles:
+      - projects/my-project/roles/my.custom.role
+  - principal: user:my-other-username@example.com
+    roles:
+      - projects/my-project/roles/my.custom.role
+```
+
+

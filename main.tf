@@ -1,3 +1,8 @@
+variable "project" {
+  description = "Google Cloud project"
+  type        = string
+}
+
 variable "custom_roles" {
   default     = []
   description = "A list of custom roles that will be created"
@@ -7,93 +12,87 @@ variable "custom_roles" {
   #  type = list(object({
   #    id          = string
   #    project     = optional(string)
-  #    title       = optional(string)
-  #    description = optional(string)
+  #    title       = string
   #    permissions = list(string)
   #  }))
 }
 
-variable "iam_members" {
+variable "iam_rules" {
   default     = []
-  description = "A list of non-authorative IAM rules"
+  description = "List of rules for IAM membership / bindings"
   type        = any
-
-  validation {
-    condition = alltrue([
-      for x in var.iam_members : contains(["project", "secret", "bucket"], x.type)
-    ])
-    error_message = "The `type` fields of `var.iam_members` must be one of ['project', 'secret', 'bucket']."
-  }
 
   # TODO: Do this when `optional()` is no longer experimental
   # type = list(object({
-  #   type    = string
-  #   name    = string
-  #   member  = string
-  #   roles   = list(string)
-  #   project = optional(string)
-  # })
+  #   principal   = string
+  #   project     = optional(string)  defaults to `var.project`
+  #   type        = optional(string)  defaults to "project"
+  #   name        = optional(string)  defaults to `var.project`
+  #   roles       = optional(list(string))
+  #   permissions = optional(list(string))
+  # }))
 }
 
-variable "iam_bindings" {
-  default     = []
-  description = "A list of authorative IAM rules for custom roles"
-  type        = any
-
-  validation {
-    condition = alltrue([
-      for x in var.iam_bindings : contains(["project", "secret", "bucket"], x.type)
-    ])
-    error_message = "The `type` fields of `var.iam_bindings` must be one of ['project', 'secret', 'bucket']."
-  }
-
-  validation {
-    condition = alltrue([
-      for x in var.iam_bindings : contains(split("/", x.role), "projects")
-    ])
-    error_message = "Only custom roles are allowed with IAM role bindings. This is to prevent accidents."
-  }
-
-  # TODO: Do this when `optional()` is no longer experimental
-  # type = list(object({
-  #   type    = string
-  #   name    = string
-  #   members = list(string)
-  #   role    = string
-  #   project = optional(string)
-  # })
+variable "repo" {
+  description = "Name of GitHub repo that calls this module; helps us see where IAM custom roles are defined as code"
 }
 
 locals {
-  # Convert `var.custom_roles` into a `for_each` compatible map
-  custom_roles = {
-    for x in var.custom_roles : x.id => x
-  }
+  # Elaborate hacks to ensure each custom role gets a unique name
+  principal_short_names = distinct([
+    for x in [for rule in var.iam_rules : rule.principal] : regex(":(.+)@", x)[0]
+  ])
 
-  # Convert `var.iam_members` into a `for_each` compatible map
-  iam_members = {
-    for x in flatten([
-      for rule in var.iam_members : [
-        for role in rule.roles : {
-          type    = rule.type
-          name    = rule.name
-          member  = rule.member
-          role    = role
-          project = lookup(rule, "project", "")
+  custom_roles_from_rules = flatten([
+    for principal_short_name in local.principal_short_names : [
+      for index, rule in [
+        for x in var.iam_rules : x
+        if alltrue([principal_short_name == regex(":(.+)@", x.principal)[0], contains(keys(x), "permissions")])
+        ] : {
+        project     = lookup(rule, "project", var.project)
+        id          = replace("${principal_short_name}_${index}", "-", "_")
+        title       = "Custom role bound to ${principal_short_name} for ${lookup(rule, "name", var.project)} (${lookup(rule, "type", "project")})"
+        description = "Created by Terraform via ${var.repo}"
+        permissions = rule.permissions
+      }
+    ]
+  ])
+
+  all_custom_roles = concat(
+    local.custom_roles_from_rules,
+    [for rule in var.custom_roles : merge(rule, { description = "Created by Terraform via ${var.repo}" })]
+  )
+
+  iam_bindings = {
+    for y in flatten([
+      for principal_short_name in local.principal_short_names : [
+        for index, rule in [
+          for x in var.iam_rules : x
+          if alltrue([principal_short_name == regex(":(.+)@", x.principal)[0], contains(keys(x), "permissions")])
+          ] : {
+          principal = [rule.principal]
+          project   = lookup(rule, "project", var.project)
+          type      = lookup(rule, "type", "project")
+          name      = lookup(rule, "name", var.project)
+          role      = "projects/${lookup(rule, "project", var.project)}/roles/${replace("${principal_short_name}_${index}", "-", "_")}"
         }
       ]
-    ]) : join("-", [x.type, x.name, x.member, x.role]) => x
+    ]) : join("-", [y.type, y.name, y.role]) => y
   }
 
-  # Convert `var.iam_bindings` into a `for_each` compatible map
-  iam_bindings = {
-    for rule in var.iam_bindings : join("-", [rule.type, rule.name, rule.role]) => {
-      type    = rule.type
-      name    = rule.name
-      members = rule.members
-      role    = rule.role
-      project = lookup(rule, "project", "")
-    }
+  iam_members = {
+    for x in flatten([
+      for rule in var.iam_rules : [
+        for role in rule.roles : {
+          principal = rule.principal
+          project   = lookup(rule, "project", var.project)
+          type      = lookup(rule, "type", "project")
+          name      = lookup(rule, "name", var.project)
+          role      = role
+        }
+      ]
+      if contains(keys(rule), "roles")
+    ]) : join("-", [x.type, x.name, x.principal, x.role]) => x
   }
 }
 
@@ -103,12 +102,12 @@ locals {
 #
 
 resource "google_project_iam_custom_role" "role" {
-  for_each = local.custom_roles
+  for_each = { for x in local.all_custom_roles : x.id => x }
 
-  project     = lookup(each.value, "project", "")
+  project     = lookup(each.value, "project", var.project)
   role_id     = each.value.id
-  title       = lookup(each.value, "title", "")
-  description = lookup(each.value, "description", "")
+  title       = each.value.title
+  description = each.value.description
   permissions = each.value.permissions
 }
 
@@ -126,7 +125,7 @@ resource "google_project_iam_member" "assignment" {
 
   project = each.value.name
   role    = each.value.role
-  member  = each.value.member
+  member  = each.value.principal
 }
 
 resource "google_storage_bucket_iam_member" "assignment" {
@@ -138,7 +137,7 @@ resource "google_storage_bucket_iam_member" "assignment" {
 
   bucket = each.value.name
   role   = each.value.role
-  member = each.value.member
+  member = each.value.principal
 }
 
 resource "google_secret_manager_secret_iam_member" "assignment" {
@@ -151,7 +150,7 @@ resource "google_secret_manager_secret_iam_member" "assignment" {
   project   = each.value.project
   secret_id = each.value.name
   role      = each.value.role
-  member    = each.value.member
+  member    = each.value.principal
 }
 
 
@@ -168,7 +167,7 @@ resource "google_project_iam_binding" "assignment" {
 
   project = each.value.name
   role    = each.value.role
-  members = each.value.members
+  members = each.value.principal
 }
 
 resource "google_storage_bucket_iam_binding" "assignment" {
@@ -180,7 +179,7 @@ resource "google_storage_bucket_iam_binding" "assignment" {
 
   bucket  = each.value.name
   role    = each.value.role
-  members = each.value.members
+  members = each.value.principal
 }
 
 resource "google_secret_manager_secret_iam_binding" "assignment" {
@@ -193,6 +192,6 @@ resource "google_secret_manager_secret_iam_binding" "assignment" {
   project   = each.value.project
   secret_id = each.value.name
   role      = each.value.role
-  members   = each.value.members
+  members   = each.value.principal
 }
 
