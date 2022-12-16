@@ -153,6 +153,31 @@ resource "google_secret_manager_secret_iam_member" "assignment" {
   member    = each.value.principal
 }
 
+resource "google_bigquery_dataset_iam_member" "assignment" {
+  depends_on = [google_project_iam_custom_role.role]
+  for_each = {
+    for k, v in local.iam_members : k => v
+    if v.type == "bigquery-dataset"
+  }
+
+  dataset_id = each.value.name
+  role       = each.value.role
+  member     = each.value.principal
+}
+
+resource "google_bigquery_table_iam_member" "assignment" {
+  depends_on = [google_project_iam_custom_role.role]
+  for_each = {
+    for k, v in local.iam_members : k => v
+    if v.type == "bigquery-table"
+  }
+
+  table_id   = each.value.name
+  dataset_id = each.value.dataset
+  role       = each.value.role
+  member     = each.value.principal
+}
+
 
 #
 ## IAM binding
