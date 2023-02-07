@@ -178,6 +178,18 @@ resource "google_bigquery_table_iam_member" "assignment" {
   member     = each.value.principal
 }
 
+resource "google_service_account_iam_member" "assignment" {
+  depends_on = [google_project_iam_custom_role.role]
+  for_each = {
+    for k, v in local.iam_members : k => v
+    if v.type == "service-account"
+  }
+
+  service_account_id = each.value.name
+  role               = each.value.role
+  member             = each.value.principal
+}
+
 
 #
 ## IAM binding
