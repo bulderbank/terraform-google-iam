@@ -190,6 +190,18 @@ resource "google_service_account_iam_member" "assignment" {
   member             = each.value.principal
 }
 
+resource "google_pubsub_subscription_iam_member" "assignment" {
+  depends_on = [google_project_iam_custom_role.role]
+  for_each = {
+    for k, v in local.iam_members : k => v
+    if v.type == "pubsub"
+  }
+
+  subscription = each.value.name
+  role         = each.value.role
+  member       = each.value.principal
+}
+
 
 #
 ## IAM binding
@@ -230,5 +242,18 @@ resource "google_secret_manager_secret_iam_binding" "assignment" {
   secret_id = each.value.name
   role      = each.value.role
   members   = each.value.principal
+}
+
+resource "google_pubsub_subscription_iam_binding" "assignment" {
+  depends_on = [google_project_iam_custom_role.role]
+  for_each = {
+    for k, v in local.iam_bindings : k => v
+    if v.type == "pubsub"
+  }
+
+  project      = each.value.project
+  subscription = each.value.name
+  role         = each.value.role
+  members      = each.value.principal
 }
 
