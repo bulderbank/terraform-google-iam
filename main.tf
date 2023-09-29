@@ -41,7 +41,7 @@ locals {
   # Elaborate hacks to ensure each custom role gets a unique name
   iam_rules_without_service_accounts = [
     for x in var.iam_rules : x
-    if x.type != "service-account"
+    if lookup(x, "type", "") != "service-account"
   ]
 
   principal_short_names = distinct([
@@ -89,11 +89,13 @@ locals {
     for x in flatten([
       for rule in var.iam_rules : [
         for role in rule.roles : {
-          principal = rule.principal
-          project   = lookup(rule, "project", var.project)
-          type      = lookup(rule, "type", "project")
-          name      = lookup(rule, "name", var.project)
-          role      = role
+          principal  = rule.principal
+          project    = lookup(rule, "project", var.project)
+          type       = lookup(rule, "type", "project")
+          name       = lookup(rule, "name", var.project)
+          role       = role
+          location   = lookup(rule, "location", "")
+          repository = lookup(rule, "repository", "")
         }
       ]
       if contains(keys(rule), "roles")
@@ -207,6 +209,17 @@ resource "google_pubsub_subscription_iam_member" "assignment" {
   member       = each.value.principal
 }
 
+resource "google_artifact_registry_repository_iam_member" "assignment" {
+  for_each = {
+    for k, v in local.iam_members : k => v
+    if v.type == "artifactregistry"
+  }
+  project    = lookup(each.value, "project", null)
+  location   = each.value.location
+  repository = each.value.repository
+  role       = each.value.role
+  member     = each.value.principal
+}
 
 #
 ## IAM binding
