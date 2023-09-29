@@ -39,14 +39,19 @@ variable "repo" {
 
 locals {
   # Elaborate hacks to ensure each custom role gets a unique name
+  iam_rules_without_service_accounts = [
+    for x in var.iam_rules : x
+    if x.type != "service-account"
+  ]
+
   principal_short_names = distinct([
-    for x in [for rule in var.iam_rules : rule.principal] : regex(":(.+)@", x)[0]
+    for x in [for rule in local.iam_rules_without_service_accounts : rule.principal] : regex(":(.+)@", x)[0]
   ])
 
   custom_roles_from_rules = flatten([
     for principal_short_name in local.principal_short_names : [
       for index, rule in [
-        for x in var.iam_rules : x
+        for x in local.iam_rules_without_service_accounts : x
         if alltrue([principal_short_name == regex(":(.+)@", x.principal)[0], contains(keys(x), "permissions")])
         ] : {
         project     = lookup(rule, "project", var.project)
@@ -67,7 +72,7 @@ locals {
     for y in flatten([
       for principal_short_name in local.principal_short_names : [
         for index, rule in [
-          for x in var.iam_rules : x
+          for x in local.iam_rules_without_service_accounts : x
           if alltrue([principal_short_name == regex(":(.+)@", x.principal)[0], contains(keys(x), "permissions")])
           ] : {
           principal = [rule.principal]
