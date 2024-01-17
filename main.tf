@@ -96,6 +96,7 @@ locals {
           role       = role
           location   = lookup(rule, "location", "")
           repository = lookup(rule, "repository", "")
+          dataset    = lookup(rule, "dataset", "")
         }
       ]
       if contains(keys(rule), "roles")
